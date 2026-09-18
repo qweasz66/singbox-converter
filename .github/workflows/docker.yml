@@ -19,11 +19,9 @@ jobs:
       - name: Lowercase repo name
         run: echo "REPO_NAME=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      # 1. 安装 QEMU 以支持 ARM 架构模拟
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 2. 设置 Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -34,7 +32,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 同时打包 amd64 和 arm64 架构镜像 (build-push-action 升级到 v6 以支持新 Node 运行时)
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
