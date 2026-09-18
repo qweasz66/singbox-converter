@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 import urllib.parse
 import base64
 import json
+import re
 import requests
 
 app = FastAPI(title="Sing-box Node Converter")
@@ -98,7 +99,6 @@ def decode_b64(s: str) -> str:
         return base64.b64decode(s).decode('utf-8', errors='ignore')
 
 def parse_vless(url_str: str) -> dict:
-    # 去除协议头
     body = url_str[8:] if url_str.startswith("vless://") else url_str
 
     # 1. 提取 Fragment (备注 #)
@@ -115,39 +115,51 @@ def parse_vless(url_str: str) -> dict:
         if 'remarks' in query_dict:
             tag = urllib.parse.unquote(query_dict['remarks'][0])
 
-    # 3. 通过最后出现的 '@' 彻底拆分 uuid_part 与 host_port
-    if "@" in body:
-        uuid_part, host_port = body.rsplit("@", 1)
+    # 3. 针对这种特殊变种链接的强力解析：
+    # 寻找形如 [...] 的 IPv6 地址段，或者按常规查找
+    uuid_part = ""
+    host_port = ""
+    
+    # 检查是否有 IPv6 中括号
+    ipv6_match = re.search(r'\[(.*?)\]', body)
+    if ipv6_match:
+        server = ipv6_match.group(1)
+        # 获取中括号后面的端口部分
+        after_bracket = body[body.find("]")+1:]
+        server_port = 443
+        if ":" in after_bracket:
+            p_match = re.search(r':(\d+)', after_bracket)
+            if p_match:
+                server_port = int(p_match.group(1))
+        
+        # 中括号前面的部分当作 uuid_part
+        uuid_part = body[:body.find("[")]
+        if uuid_part.endswith("@"):
+            uuid_part = uuid_part[:-1]
     else:
-        uuid_part = ""
-        host_port = body
-
-    # 解密 uuid_part（如果它是 Base64 编码的，例如 OjVkOTg2M2Qy... 解码后得到 :5d9863d2-...）
-    uuid_str = uuid_part
-    if uuid_part:
-        decoded_uuid = decode_b64(uuid_part)
-        if decoded_uuid:
-            # 清理掉可能带有的冒号前缀
-            uuid_str = decoded_uuid.lstrip(":").strip()
-
-    # 4. 解析 Server 与 Server_Port（完美适配 IPv6 带中括号 [] 的情况）
-    server = ""
-    server_port = 443
-    if "]" in host_port:
-        # IPv6 格式: [2606:4700...]:443 或 [2606:4700...]
-        server = host_port[host_port.find("[")+1 : host_port.find("]")]
-        if ":" in host_port[host_port.find("]")+1:]:
-            port_str = host_port.split("]")[-1].lstrip(":")
-            if port_str.isdigit():
-                server_port = int(port_str)
-    else:
-        # 普通域名/IPv4 格式: example.com:443
+        # 常规分割
+        if "@" in body:
+            uuid_part, host_port = body.rsplit("@", 1)
+        else:
+            uuid_part = ""
+            host_port = body
+            
+        server = host_port
+        server_port = 443
         if ":" in host_port:
             server, port_str = host_port.rsplit(":", 1)
             if port_str.isdigit():
                 server_port = int(port_str)
-        else:
-            server = host_port
+
+    # UUID 解码与格式化
+    uuid_str = uuid_part
+    if uuid_part:
+        dec = decode_b64(uuid_part)
+        if dec:
+            # 清理可能残留的冒号
+            cleaned = dec.lstrip(":").strip()
+            if cleaned:
+                uuid_str = cleaned
 
     node = {
         "type": "vless",
