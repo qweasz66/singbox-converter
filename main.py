@@ -102,35 +102,57 @@ def parse_vless(url_str: str) -> dict:
     q = urllib.parse.parse_qs(u.query)
     tag = urllib.parse.unquote(u.fragment) if u.fragment else u.hostname
     
+    user_info = urllib.parse.unquote(u.username or "")
+    if '@' in user_info:
+        uuid_str = user_info.split('@')[-1]
+    else:
+        uuid_str = user_info
+        
     node = {
         "type": "vless",
         "tag": tag,
         "server": u.hostname,
         "server_port": u.port or 443,
-        "uuid": u.username
+        "uuid": uuid_str
     }
-    net = q.get('type', ['tcp'])[0]
-    path = q.get('path', [''])[0]
+    
+    # 兼容获取传输类型（支持 type 或 obfs）
+    net = q.get('type', [q.get('obfs', ['tcp'])[0]])[0]
+    
+    # 处理 path 并解码
+    raw_path = q.get('path', ['/'])[0]
+    path = urllib.parse.unquote(raw_path)
+    
+    # 提取 Host（优先从 obfsParam 的 JSON 中解析，其次从 host 参数取）
     host = q.get('host', [''])[0]
-    security = q.get('security', [''])[0]
-    sni = q.get('sni', [q.get('peer', [''])[0]])[0]
-    fp = q.get('fp', ['chrome'])[0]
+    obfs_param = q.get('obfsParam', [''])[0]
+    if obfs_param:
+        try:
+            param_json = json.loads(obfs_param)
+            if "Host" in param_json:
+                host = param_json["Host"]
+        except Exception:
+            pass
+            
+    security = q.get('security', ['tls' if u.scheme=='vless' and (q.get('tls',[''])[0]=='1' or q.get('tls',[''])[0]=='true') else ''])[0]
+    sni = q.get('sni', [q.get('peer', [host])[0]])[0]
+    fp = q.get('fp', [q.get('fingerprint', ['chrome'])[0]])[0]
 
-    if net == "ws":
+    if net in ["ws", "websocket"]:
         node["transport"] = {"type": "ws", "path": path}
         if host:
             node["transport"]["headers"] = {"Host": host}
     elif net == "grpc":
         node["transport"] = {"type": "grpc", "service_name": q.get('serviceName', [''])[0]}
 
-    if security in ["tls", "reality"]:
+    if security in ["tls", "1", "true"] or q.get('tls', [''])[0] in ['1', 'true']:
         node["tls"] = {
             "enabled": True,
             "server_name": sni or host or u.hostname,
-            "insecure": q.get('allowInsecure', ['0'])[0] == '1',
+            "insecure": q.get('allowInsecure', ['0'])[0] in ['1', 'true'],
             "utls": {"enabled": True, "fingerprint": fp}
         }
-        if security == "reality":
+        if security == "reality" or q.get('security', [''])[0] == "reality":
             node["tls"]["reality"] = {
                 "enabled": True,
                 "public_key": q.get('pbk', [''])[0],
@@ -265,7 +287,7 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
         elif g.get("type") == "selector":
-            reserved = [t for t in g.get("outbounds", []) if t in ["DIRECT", "REJECT", "♻️ 自动选择"]]
+            reserved = [t for t in g.get("outbounds", []) if t in ["DIRECT", "REJECT", "♻️ 自动选择", "🚀 节点选择"]]
             g["outbounds"] = reserved + node_tags
         new_outbounds.append(g)
 
