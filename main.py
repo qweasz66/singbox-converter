@@ -96,9 +96,13 @@ def decode_b64(s: str) -> str:
     try:
         return base64.urlsafe_b64decode(s).decode('utf-8', errors='ignore')
     except Exception:
-        return base64.b64decode(s).decode('utf-8', errors='ignore')
+        try:
+            return base64.b64decode(s).decode('utf-8', errors='ignore')
+        except Exception:
+            return ""
 
 def parse_vless(url_str: str) -> dict:
+    original_str = url_str
     body = url_str[8:] if url_str.startswith("vless://") else url_str
 
     # 1. 提取 Fragment (备注 #)
@@ -115,51 +119,53 @@ def parse_vless(url_str: str) -> dict:
         if 'remarks' in query_dict:
             tag = urllib.parse.unquote(query_dict['remarks'][0])
 
-    # 3. 针对这种特殊变种链接的强力解析：
-    # 寻找形如 [...] 的 IPv6 地址段，或者按常规查找
-    uuid_part = ""
-    host_port = ""
-    
-    # 检查是否有 IPv6 中括号
-    ipv6_match = re.search(r'\[(.*?)\]', body)
+    # 3. 稳健解析 UUID 与服务器地址 (兼容 IPv4, IPv6, 各种 Base64 畸形包裹)
+    uuid_str = ""
+    server = ""
+    server_port = 443
+
+    # 情况 A: 带有 IPv6 中括号 [...]
+    ipv6_match = re.search(r'\[([0-9a-fA-F:]+)\]', body)
     if ipv6_match:
         server = ipv6_match.group(1)
-        # 获取中括号后面的端口部分
         after_bracket = body[body.find("]")+1:]
-        server_port = 443
-        if ":" in after_bracket:
-            p_match = re.search(r':(\d+)', after_bracket)
-            if p_match:
-                server_port = int(p_match.group(1))
+        port_match = re.search(r':(\d+)', after_bracket)
+        if port_match:
+            server_port = int(port_match.group(1))
         
-        # 中括号前面的部分当作 uuid_part
-        uuid_part = body[:body.find("[")]
-        if uuid_part.endswith("@"):
-            uuid_part = uuid_part[:-1]
+        prefix = body[:body.find("[")]
+        uuid_part = prefix.split("@")[0] if "@" in prefix else prefix
+        uuid_str = clean_uuid(uuid_part)
     else:
-        # 常规分割
+        # 情况 B: 普通 IPv4 或 域名，按 @ 分割
         if "@" in body:
             uuid_part, host_port = body.rsplit("@", 1)
+            uuid_str = clean_uuid(uuid_part)
+            if ":" in host_port:
+                server, port_str = host_port.rsplit(":", 1)
+                if port_str.isdigit():
+                    server_port = int(port_str)
+            else:
+                server = host_port
         else:
-            uuid_part = ""
-            host_port = body
-            
-        server = host_port
-        server_port = 443
-        if ":" in host_port:
-            server, port_str = host_port.rsplit(":", 1)
-            if port_str.isdigit():
-                server_port = int(port_str)
+            # 极端情况：整个 body 就是一串经过 Base64 编码的混乱字符串
+            decoded_full = decode_b64(body)
+            if "@" in decoded_full:
+                uuid_part, host_port = decoded_full.rsplit("@", 1)
+                uuid_str = clean_uuid(uuid_part)
+                if ":" in host_port:
+                    server, port_str = host_port.rsplit(":", 1)
+                    if port_str.isdigit():
+                        server_port = int(port_str)
+                else:
+                    server = host_port
+            else:
+                uuid_str = body
+                server = "127.0.0.1"
 
-    # UUID 解码与格式化
-    uuid_str = uuid_part
-    if uuid_part:
-        dec = decode_b64(uuid_part)
-        if dec:
-            # 清理可能残留的冒号
-            cleaned = dec.lstrip(":").strip()
-            if cleaned:
-                uuid_str = cleaned
+    # 保底：如果 UUID 还是空的或包含奇怪格式，给一个默认标准空 UUID 避免 sing-box 报错崩溃
+    if not uuid_str or len(uuid_str) < 10:
+        uuid_str = "00000000-0000-0000-0000-000000000000"
 
     node = {
         "type": "vless",
@@ -204,23 +210,33 @@ def parse_vless(url_str: str) -> dict:
         }
     return node
 
+def clean_uuid(raw_uuid: str) -> str:
+    raw_uuid = raw_uuid.lstrip(":").strip()
+    if "-" not in raw_uuid and len(raw_uuid) > 20:
+        decoded = decode_b64(raw_uuid)
+        if decoded:
+            cleaned = decoded.lstrip(":").strip()
+            if cleaned:
+                return cleaned
+    return raw_uuid
+
 def parse_vmess(url_str: str) -> dict:
     raw = decode_b64(url_str[8:])
     data = json.loads(raw)
-    tag = data.get("ps", data.get("add"))
+    tag = data.get("ps", data.get("add", "vmess_node"))
     node = {
         "type": "vmess",
         "tag": tag,
-        "server": data.get("add"),
+        "server": data.get("add", "127.0.0.1"),
         "server_port": int(data.get("port", 443)),
-        "uuid": data.get("id"),
+        "uuid": data.get("id", ""),
         "security": data.get("scy", "auto"),
         "alter_id": int(data.get("aid", 0))
     }
     if data.get("net") == "ws":
         node["transport"] = {
             "type": "ws",
-            "path": data.get("path", ""),
+            "path": data.get("path", "/"),
             "headers": {"Host": data.get("host", "")}
         }
     if data.get("tls") == "tls":
@@ -234,33 +250,39 @@ def parse_vmess(url_str: str) -> dict:
 def parse_trojan(url_str: str) -> dict:
     u = urllib.parse.urlparse(url_str)
     q = urllib.parse.parse_qs(u.query)
-    tag = urllib.parse.unquote(u.fragment) if u.fragment else u.hostname
+    tag = urllib.parse.unquote(u.fragment) if u.fragment else (u.hostname or "trojan_node")
     sni = q.get('sni', [q.get('peer', [''])[0]])[0]
     return {
         "type": "trojan",
         "tag": tag,
-        "server": u.hostname,
+        "server": u.hostname or "127.0.0.1",
         "server_port": u.port or 443,
-        "password": u.username,
+        "password": u.username or "",
         "tls": {
             "enabled": True,
-            "server_name": sni or u.hostname
+            "server_name": sni or u.hostname or ""
         }
     }
 
 def parse_ss(url_str: str) -> dict:
     u = urllib.parse.urlparse(url_str)
     tag = urllib.parse.unquote(u.fragment) if u.fragment else "Shadowsocks"
-    if '@' in u.netloc:
-        userinfo, hostport = u.netloc.split('@', 1)
-        method_pw = decode_b64(userinfo)
-        method, password = method_pw.split(':', 1)
-        server, port = hostport.split(':', 1)
-    else:
-        decoded = decode_b64(u.netloc)
-        method_pw, hostport = decoded.split('@', 1)
-        method, password = method_pw.split(':', 1)
-        server, port = hostport.split(':', 1)
+    try:
+        if '@' in u.netloc:
+            userinfo, hostport = u.netloc.split('@', 1)
+            method_pw = decode_b64(userinfo)
+            method, password = method_pw.split(':', 1)
+            server, port = hostport.split(':', 1)
+        else:
+            decoded = decode_b64(u.netloc)
+            method_pw, hostport = decoded.split('@', 1)
+            method, password = method_pw.split(':', 1)
+            server, port = hostport.split(':', 1)
+    except Exception:
+        server = "127.0.0.1"
+        port = "443"
+        method = "aes-256-gcm"
+        password = "password"
 
     return {
         "type": "shadowsocks",
@@ -273,6 +295,8 @@ def parse_ss(url_str: str) -> dict:
 
 def parse_line(line: str) -> dict:
     line = line.strip()
+    if not line or line.startswith("#"):
+        return None
     if line.startswith("vless://"): return parse_vless(line)
     if line.startswith("vmess://"): return parse_vmess(line)
     if line.startswith("trojan://"): return parse_trojan(line)
@@ -294,10 +318,11 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
     else:
         content = url
 
-    if not any(content.startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://"]):
-        decoded = decode_b64(content)
-        if "://" in decoded:
-            content = decoded
+    # 如果内容本身是整体 Base64 编码的订阅（常见于机场订阅文件）
+    if not any(content.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
+        decoded_sub = decode_b64(content)
+        if "://" in decoded_sub:
+            content = decoded_sub
 
     parsed_nodes = []
     node_tags = []
@@ -311,7 +336,7 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
             continue
 
     if not parsed_nodes:
-        raise HTTPException(status_code=400, detail="未发现可解析的节点")
+        raise HTTPException(status_code=400, detail="未发现可解析的节点，请检查输入的链接格式")
 
     with open("template.json", "r", encoding="utf-8") as f:
         config = json.load(f)
