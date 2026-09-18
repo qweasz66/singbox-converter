@@ -98,48 +98,72 @@ def decode_b64(s: str) -> str:
         return base64.b64decode(s).decode('utf-8', errors='ignore')
 
 def parse_vless(url_str: str) -> dict:
-    url_body = url_str[8:] if url_str.startswith("vless://") else url_str
+    # 去除协议头
+    body = url_str[8:] if url_str.startswith("vless://") else url_str
 
-    if "@" not in url_body:
-        idx = url_body.rfind("[")
-        if idx != -1:
-            uuid_part = url_body[:idx]
-            host_port_query = url_body[idx:]
-        else:
-            uuid_part = ""
-            host_port_query = url_body
+    # 1. 提取 Fragment (备注 #)
+    tag = "vless_node"
+    if "#" in body:
+        body, frag = body.rsplit("#", 1)
+        tag = urllib.parse.unquote(frag)
+
+    # 2. 提取 Query (参数 ?)
+    query_dict = {}
+    if "?" in body:
+        body, query_str = body.split("?", 1)
+        query_dict = urllib.parse.parse_qs(query_str)
+        if 'remarks' in query_dict:
+            tag = urllib.parse.unquote(query_dict['remarks'][0])
+
+    # 3. 通过最后出现的 '@' 彻底拆分 uuid_part 与 host_port
+    if "@" in body:
+        uuid_part, host_port = body.rsplit("@", 1)
     else:
-        uuid_part, host_port_query = url_body.rsplit("@", 1)
+        uuid_part = ""
+        host_port = body
 
-    standard_url = f"vless://dummy_uuid@{host_port_query}"
-    u = urllib.parse.urlparse(standard_url)
-    q = urllib.parse.parse_qs(u.query)
-    
-    tag = urllib.parse.unquote(u.fragment) if u.fragment else (q.get('remarks', ['vless_node'])[0])
-
+    # 解密 uuid_part（如果它是 Base64 编码的，例如 OjVkOTg2M2Qy... 解码后得到 :5d9863d2-...）
     uuid_str = uuid_part
-    if uuid_part and not "-" in uuid_part:
-        try:
-            decoded_uuid = decode_b64(uuid_part)
-            if decoded_uuid:
-                uuid_str = decoded_uuid.strip()
-        except Exception:
-            pass
+    if uuid_part:
+        decoded_uuid = decode_b64(uuid_part)
+        if decoded_uuid:
+            # 清理掉可能带有的冒号前缀
+            uuid_str = decoded_uuid.lstrip(":").strip()
+
+    # 4. 解析 Server 与 Server_Port（完美适配 IPv6 带中括号 [] 的情况）
+    server = ""
+    server_port = 443
+    if "]" in host_port:
+        # IPv6 格式: [2606:4700...]:443 或 [2606:4700...]
+        server = host_port[host_port.find("[")+1 : host_port.find("]")]
+        if ":" in host_port[host_port.find("]")+1:]:
+            port_str = host_port.split("]")[-1].lstrip(":")
+            if port_str.isdigit():
+                server_port = int(port_str)
+    else:
+        # 普通域名/IPv4 格式: example.com:443
+        if ":" in host_port:
+            server, port_str = host_port.rsplit(":", 1)
+            if port_str.isdigit():
+                server_port = int(port_str)
+        else:
+            server = host_port
 
     node = {
         "type": "vless",
         "tag": tag,
-        "server": u.hostname,
-        "server_port": u.port or 443,
+        "server": server,
+        "server_port": server_port,
         "uuid": uuid_str
     }
     
-    net = q.get('type', [q.get('obfs', ['tcp'])[0]])[0]
-    raw_path = q.get('path', ['/'])[0]
+    # 提取传输类型与路径
+    net = query_dict.get('type', [query_dict.get('obfs', ['tcp'])[0]])[0]
+    raw_path = query_dict.get('path', ['/'])[0]
     path = urllib.parse.unquote(raw_path)
     
-    host = q.get('host', [''])[0]
-    obfs_param = q.get('obfsParam', [''])[0]
+    host = query_dict.get('host', [''])[0]
+    obfs_param = query_dict.get('obfsParam', [''])[0]
     if obfs_param:
         try:
             param_json = json.loads(obfs_param)
@@ -148,30 +172,24 @@ def parse_vless(url_str: str) -> dict:
         except Exception:
             pass
             
-    security = q.get('security', ['tls' if (q.get('tls',[''])[0]=='1' or q.get('tls',[''])[0]=='true') else ''])[0]
-    sni = q.get('sni', [q.get('peer', [host])[0]])[0]
-    fp = q.get('fp', [q.get('fingerprint', ['chrome'])[0]])[0]
+    security = query_dict.get('security', ['tls' if (query_dict.get('tls',[''])[0]=='1' or query_dict.get('tls',[''])[0]=='true') else ''])[0]
+    sni = query_dict.get('sni', [query_dict.get('peer', [host])[0]])[0]
+    fp = query_dict.get('fp', [query_dict.get('fingerprint', ['chrome'])[0]])[0]
 
     if net in ["ws", "websocket"]:
         node["transport"] = {"type": "ws", "path": path}
         if host:
             node["transport"]["headers"] = {"Host": host}
     elif net == "grpc":
-        node["transport"] = {"type": "grpc", "service_name": q.get('serviceName', [''])[0]}
+        node["transport"] = {"type": "grpc", "service_name": query_dict.get('serviceName', [''])[0]}
 
-    if security in ["tls", "1", "true"] or q.get('tls', [''])[0] in ['1', 'true']:
+    if security in ["tls", "1", "true"] or query_dict.get('tls', [''])[0] in ['1', 'true']:
         node["tls"] = {
             "enabled": True,
-            "server_name": sni or host or u.hostname,
-            "insecure": q.get('allowInsecure', ['0'])[0] in ['1', 'true'],
+            "server_name": sni or host or server,
+            "insecure": query_dict.get('allowInsecure', ['0'])[0] in ['1', 'true'],
             "utls": {"enabled": True, "fingerprint": fp}
         }
-        if security == "reality" or q.get('security', [''])[0] == "reality":
-            node["tls"]["reality"] = {
-                "enabled": True,
-                "public_key": q.get('pbk', [''])[0],
-                "short_id": q.get('sid', [''])[0]
-            }
     return node
 
 def parse_vmess(url_str: str) -> dict:
@@ -277,7 +295,7 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
             if node:
                 parsed_nodes.append(node)
                 node_tags.append(node["tag"])
-        except Exception:
+        except Exception as e:
             continue
 
     if not parsed_nodes:
