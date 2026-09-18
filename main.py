@@ -98,16 +98,34 @@ def decode_b64(s: str) -> str:
         return base64.b64decode(s).decode('utf-8', errors='ignore')
 
 def parse_vless(url_str: str) -> dict:
-    u = urllib.parse.urlparse(url_str)
-    q = urllib.parse.parse_qs(u.query)
-    tag = urllib.parse.unquote(u.fragment) if u.fragment else u.hostname
-    
-    user_info = urllib.parse.unquote(u.username or "")
-    if '@' in user_info:
-        uuid_str = user_info.split('@')[-1]
+    url_body = url_str[8:] if url_str.startswith("vless://") else url_str
+
+    if "@" not in url_body:
+        idx = url_body.rfind("[")
+        if idx != -1:
+            uuid_part = url_body[:idx]
+            host_port_query = url_body[idx:]
+        else:
+            uuid_part = ""
+            host_port_query = url_body
     else:
-        uuid_str = user_info
-        
+        uuid_part, host_port_query = url_body.rsplit("@", 1)
+
+    standard_url = f"vless://dummy_uuid@{host_port_query}"
+    u = urllib.parse.urlparse(standard_url)
+    q = urllib.parse.parse_qs(u.query)
+    
+    tag = urllib.parse.unquote(u.fragment) if u.fragment else (q.get('remarks', ['vless_node'])[0])
+
+    uuid_str = uuid_part
+    if uuid_part and not "-" in uuid_part:
+        try:
+            decoded_uuid = decode_b64(uuid_part)
+            if decoded_uuid:
+                uuid_str = decoded_uuid.strip()
+        except Exception:
+            pass
+
     node = {
         "type": "vless",
         "tag": tag,
@@ -116,14 +134,10 @@ def parse_vless(url_str: str) -> dict:
         "uuid": uuid_str
     }
     
-    # 兼容获取传输类型（支持 type 或 obfs）
     net = q.get('type', [q.get('obfs', ['tcp'])[0]])[0]
-    
-    # 处理 path 并解码
     raw_path = q.get('path', ['/'])[0]
     path = urllib.parse.unquote(raw_path)
     
-    # 提取 Host（优先从 obfsParam 的 JSON 中解析，其次从 host 参数取）
     host = q.get('host', [''])[0]
     obfs_param = q.get('obfsParam', [''])[0]
     if obfs_param:
@@ -134,7 +148,7 @@ def parse_vless(url_str: str) -> dict:
         except Exception:
             pass
             
-    security = q.get('security', ['tls' if u.scheme=='vless' and (q.get('tls',[''])[0]=='1' or q.get('tls',[''])[0]=='true') else ''])[0]
+    security = q.get('security', ['tls' if (q.get('tls',[''])[0]=='1' or q.get('tls',[''])[0]=='true') else ''])[0]
     sni = q.get('sni', [q.get('peer', [host])[0]])[0]
     fp = q.get('fp', [q.get('fingerprint', ['chrome'])[0]])[0]
 
