@@ -22,8 +22,9 @@ HTML_CONTENT = """
         h2 { font-size: 22px; margin-bottom: 8px; color: #111; text-align: center; }
         p.subtitle { font-size: 14px; color: #666; text-align: center; margin-bottom: 24px; }
         label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 8px; color: #444; }
-        textarea { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 18px; outline: none; transition: border-color 0.2s; height: 120px; resize: vertical; font-family: monospace; }
-        textarea:focus { border-color: #0070f3; }
+        textarea, select { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 18px; outline: none; transition: border-color 0.2s; font-family: inherit; }
+        textarea { height: 120px; resize: vertical; font-family: monospace; }
+        textarea:focus, select:focus { border-color: #0070f3; }
         .btn-group { display: flex; gap: 12px; margin-bottom: 20px; }
         button { flex: 1; padding: 12px; font-size: 15px; font-weight: 600; color: #fff; background-color: #0070f3; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
         button:hover { background-color: #0051cc; }
@@ -38,6 +39,12 @@ HTML_CONTENT = """
         <h2>🚀 Sing-box 节点转换器</h2>
         <p class="subtitle">轻松转换小火箭节点/订阅为完整 Sing-box 配置文件</p>
         
+        <label for="template-select">选择转换模板：</label>
+        <select id="template-select">
+            <option value="lite">精简版自定义模板 (template.json)</option>
+            <option value="acl">ACL4SSR 全分组模板 (template-acl.json)</option>
+        </select>
+
         <label for="input-content">粘贴节点链接或订阅地址：</label>
         <textarea id="input-content" placeholder="支持 vless://, vmess://, trojan://, ss:// 链接，或直接输入 http(s):// 订阅链接..."></textarea>
         
@@ -56,12 +63,13 @@ HTML_CONTENT = """
     <script>
         function getConvertUrl() {
             const input = document.getElementById('input-content').value.trim();
+            const template = document.getElementById('template-select').value;
             if (!input) {
                 alert('请先输入节点链接或订阅地址！');
                 return null;
             }
             const baseUrl = window.location.origin + '/convert?url=';
-            return baseUrl + encodeURIComponent(input);
+            return baseUrl + encodeURIComponent(input) + '&template=' + template;
         }
 
         function convertNode() {
@@ -105,13 +113,11 @@ def parse_vless(url_str: str) -> dict:
     original_str = url_str
     body = url_str[8:] if url_str.startswith("vless://") else url_str
 
-    # 1. 提取 Fragment (备注 #)
     tag = "vless_node"
     if "#" in body:
         body, frag = body.rsplit("#", 1)
         tag = urllib.parse.unquote(frag)
 
-    # 2. 提取 Query (参数 ?)
     query_dict = {}
     if "?" in body:
         body, query_str = body.split("?", 1)
@@ -119,12 +125,10 @@ def parse_vless(url_str: str) -> dict:
         if 'remarks' in query_dict:
             tag = urllib.parse.unquote(query_dict['remarks'][0])
 
-    # 3. 稳健解析 UUID 与服务器地址 (兼容 IPv4, IPv6, 各种 Base64 畸形包裹)
     uuid_str = ""
     server = ""
     server_port = 443
 
-    # 情况 A: 带有 IPv6 中括号 [...]
     ipv6_match = re.search(r'\[([0-9a-fA-F:]+)\]', body)
     if ipv6_match:
         server = ipv6_match.group(1)
@@ -137,7 +141,6 @@ def parse_vless(url_str: str) -> dict:
         uuid_part = prefix.split("@")[0] if "@" in prefix else prefix
         uuid_str = clean_uuid(uuid_part)
     else:
-        # 情况 B: 普通 IPv4 或 域名，按 @ 分割
         if "@" in body:
             uuid_part, host_port = body.rsplit("@", 1)
             uuid_str = clean_uuid(uuid_part)
@@ -148,7 +151,6 @@ def parse_vless(url_str: str) -> dict:
             else:
                 server = host_port
         else:
-            # 极端情况：整个 body 就是一串经过 Base64 编码的混乱字符串
             decoded_full = decode_b64(body)
             if "@" in decoded_full:
                 uuid_part, host_port = decoded_full.rsplit("@", 1)
@@ -163,7 +165,6 @@ def parse_vless(url_str: str) -> dict:
                 uuid_str = body
                 server = "127.0.0.1"
 
-    # 保底：如果 UUID 还是空的或包含奇怪格式，给一个默认标准空 UUID 避免 sing-box 报错崩溃
     if not uuid_str or len(uuid_str) < 10:
         uuid_str = "00000000-0000-0000-0000-000000000000"
 
@@ -175,7 +176,6 @@ def parse_vless(url_str: str) -> dict:
         "uuid": uuid_str
     }
     
-    # 提取传输类型与路径
     net = query_dict.get('type', [query_dict.get('obfs', ['tcp'])[0]])[0]
     raw_path = query_dict.get('path', ['/'])[0]
     path = urllib.parse.unquote(raw_path)
@@ -308,7 +308,10 @@ def index():
     return HTML_CONTENT
 
 @app.get("/convert")
-def convert(url: str = Query(..., description="订阅链接或节点内容")):
+def convert(
+    url: str = Query(..., description="订阅链接或节点内容"),
+    template: str = Query("lite", description="模板类型：lite 或 acl")
+):
     if url.startswith("http://") or url.startswith("https://"):
         try:
             resp = requests.get(url, timeout=10)
@@ -318,7 +321,6 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
     else:
         content = url
 
-    # 如果内容本身是整体 Base64 编码的订阅（常见于机场订阅文件）
     if not any(content.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
         decoded_sub = decode_b64(content)
         if "://" in decoded_sub:
@@ -338,8 +340,14 @@ def convert(url: str = Query(..., description="订阅链接或节点内容")):
     if not parsed_nodes:
         raise HTTPException(status_code=400, detail="未发现可解析的节点，请检查输入的链接格式")
 
-    with open("template.json", "r", encoding="utf-8") as f:
-        config = json.load(f)
+    # 根据前端选择动态加载模板：lite 对应 template.json，acl 对应 template-acl.json
+    template_file = "template-acl.json" if template == "acl" else "template.json"
+    
+    try:
+        with open(template_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"找不到对应的模板文件: {template_file}")
 
     base_outbounds = []
     group_outbounds = []
