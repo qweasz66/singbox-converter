@@ -1,0 +1,219 @@
+{
+  "log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "local-dns",
+        "address": "223.5.5.5",
+        "detour": "DIRECT"
+      },
+      {
+        "tag": "remote-dns",
+        "address": "https://1.1.1.1/dns-query",
+        "detour": "🚀 节点选择"
+      }
+    ],
+    "rules": [
+      {
+        "geosite": ["cn"],
+        "server": "local-dns"
+      }
+    ],
+    "final": "remote-dns"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun0",
+      "inet4_address": "172.19.0.1/30",
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "mixed",
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "🚀 节点选择",
+      "outbounds": [
+        "♻️ 自动选择",
+        "DIRECT"
+      ],
+      "default": "♻️ 自动选择"
+    },
+    {
+      "type": "urltest",
+      "tag": "♻️ 自动选择",
+      "outbounds": [],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 50
+    },
+    {
+      "type": "selector",
+      "tag": "🤖 AI 服务",
+      "outbounds": [
+        "🚀 节点选择",
+        "♻️ 自动选择",
+        "DIRECT"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "📺 哔哩哔哩",
+      "outbounds": [
+        "DIRECT",
+        "🚀 节点选择"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "🎥 国外媒体",
+      "outbounds": [
+        "🚀 节点选择",
+        "♻️ 自动选择",
+        "DIRECT"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "🎵 电报消息",
+      "outbounds": [
+        "🚀 节点选择",
+        "♻️ 自动选择"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "🍎 苹果服务",
+      "outbounds": [
+        "DIRECT",
+        "🚀 节点选择"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "Microsoft",
+      "outbounds": [
+        "DIRECT",
+        "🚀 节点选择"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "🛑 全局拦截",
+      "outbounds": [
+        "REJECT",
+        "DIRECT"
+      ]
+    },
+    {
+      "type": "selector",
+      "tag": "🎯 全局直连",
+      "outbounds": [
+        "DIRECT",
+        "🚀 节点选择"
+      ]
+    },
+    {
+      "type": "direct",
+      "tag": "DIRECT"
+    },
+    {
+      "type": "block",
+      "tag": "REJECT"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "domain_suffix": [
+          "ads.oppomobile.com",
+          "admob.com",
+          "googlesyndication.com"
+        ],
+        "outbound": "🛑 全局拦截"
+      },
+      {
+        "domain_suffix": [
+          "openai.com",
+          "ai.com",
+          "anthropic.com",
+          "claude.ai",
+          "akamaized.net",
+          "sentry.io",
+          "stripe.com",
+          "hcaptcha.com"
+        ],
+        "outbound": "🤖 AI 服务"
+      },
+      {
+        "domain_keyword": ["telegram", "t.me", "tdesktop"],
+        "outbound": "🎵 电报消息"
+      },
+      {
+        "domain_suffix": [
+          "bilibili.com",
+          "biliapi.net",
+          "bilivideo.com"
+        ],
+        "outbound": "📺 哔哩哔哩"
+      },
+      {
+        "domain_suffix": [
+          "youtube.com",
+          "googlevideo.com",
+          "netflix.com",
+          "nflxvideo.net",
+          "disneyplus.com",
+          "spotify.com",
+          "hbo.com",
+          "primevideo.com"
+        ],
+        "outbound": "🎥 国外媒体"
+      },
+      {
+        "domain_suffix": [
+          "apple.com",
+          "icloud.com",
+          "mzstatic.com",
+          "itunes.com"
+        ],
+        "outbound": "🍎 苹果服务"
+      },
+      {
+        "domain_suffix": [
+          "microsoft.com",
+          "windows.com",
+          "office.com",
+          "live.com"
+        ],
+        "outbound": "Microsoft"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "🎯 全局直连"
+      },
+      {
+        "geosite": ["cn", "private"],
+        "outbound": "🎯 全局直连"
+      },
+      {
+        "geoip": ["cn", "private"],
+        "outbound": "🎯 全局直连"
+      }
+    ],
+    "final": "🚀 节点选择",
+    "auto_detect_interface": true
+  }
+}
