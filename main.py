@@ -37,7 +37,7 @@ HTML_CONTENT = """
 <body>
     <div class="container">
         <h2>🚀 Sing-box 节点转换器</h2>
-        <p class="subtitle">轻松转换小火箭节点/订阅为完整 Sing-box 配置文件</p>
+        <p class="subtitle">自动去重 / 地区分流 / 智能注入</p>
         
         <label for="template-select">选择转换模板：</label>
         <select id="template-select">
@@ -95,6 +95,15 @@ HTML_CONTENT = """
 </body>
 </html>
 """
+
+REGION_RULES = {
+    "🇭🇰 香港节点": re.compile(r"香港|HK|Hong\s*Kong", re.I),
+    "🇯🇵 日本节点": re.compile(r"日本|JP|Japan|Tokyo|Osaka", re.I),
+    "🇺🇲 美国节点": re.compile(r"美国|US|United\s*States|America", re.I),
+    "🇸🇬 狮城节点": re.compile(r"新加坡|狮城|SG|Singapore", re.I),
+    "🇨🇳 台湾节点": re.compile(r"台湾|TW|Taiwan|Taipei", re.I),
+    "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul", re.I),
+}
 
 def decode_b64(s: str) -> str:
     s = s.strip()
@@ -187,9 +196,11 @@ def parse_vless(url_str: str) -> dict:
     raw_path = query_dict.get('path', ['/'])[0]
     path = urllib.parse.unquote(raw_path)
     host = query_dict.get('host', [''])[0]
-    security = query_dict.get('security', ['tls' if (query_dict.get('tls',[''])[0]=='1' or query_dict.get('tls',[''])[0]=='true') else ''])[0]
+    security = query_dict.get('security', ['tls' if (query_dict.get('tls',[''])[0] in ['1','true']) else ''])[0]
     sni = query_dict.get('sni', [query_dict.get('peer', [host])[0]])[0]
     fp = query_dict.get('fp', [query_dict.get('fingerprint', ['chrome'])[0]])[0]
+    pbk = query_dict.get('pbk', [''])[0]
+    sid = query_dict.get('sid', [''])[0]
 
     if net in ["ws", "websocket"]:
         node["transport"] = {"type": "ws", "path": path}
@@ -198,7 +209,18 @@ def parse_vless(url_str: str) -> dict:
     elif net == "grpc":
         node["transport"] = {"type": "grpc", "service_name": query_dict.get('serviceName', [''])[0]}
 
-    if security in ["tls", "1", "true"] or query_dict.get('tls', [''])[0] in ['1', 'true']:
+    if security == "reality":
+        node["tls"] = {
+            "enabled": True,
+            "server_name": sni or server,
+            "utls": {"enabled": True, "fingerprint": fp},
+            "reality": {
+                "enabled": True,
+                "public_key": pbk,
+                "short_id": sid
+            }
+        }
+    elif security in ["tls", "1", "true"] or query_dict.get('tls', [''])[0] in ['1', 'true']:
         node["tls"] = {
             "enabled": True,
             "server_name": sni or host or server,
@@ -315,26 +337,40 @@ def convert(
 
     parsed_nodes = []
     node_tags = []
+    seen_tags = {}
+
     for line in content.splitlines():
         try:
             node = parse_line(line)
             if node:
+                # Tag 去重防崩处理
+                base_tag = node["tag"].strip() or "Node"
+                count = seen_tags.get(base_tag, 0)
+                seen_tags[base_tag] = count + 1
+                unique_tag = base_tag if count == 0 else f"{base_tag} ({count})"
+                node["tag"] = unique_tag
+                
                 parsed_nodes.append(node)
-                node_tags.append(node["tag"])
-        except Exception as e:
+                node_tags.append(unique_tag)
+        except Exception:
             continue
 
     if not parsed_nodes:
         raise HTTPException(status_code=400, detail="未发现可解析的节点，请检查输入的链接格式")
 
-    # 根据选择加载对应文件：精简版用原版 template.json，全分组用 template-acl.json
     template_file = "template-acl.json" if template == "acl" else "template.json"
-    
     try:
         with open(template_file, "r", encoding="utf-8") as f:
             config = json.load(f)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"找不到对应的模板文件: {template_file}")
+
+    # 分类准备：按地区整理节点 tag
+    region_tags = {k: [] for k in REGION_RULES}
+    for tag in node_tags:
+        for reg_name, pattern in REGION_RULES.items():
+            if pattern.search(tag):
+                region_tags[reg_name].append(tag)
 
     base_outbounds = []
     group_outbounds = []
@@ -347,15 +383,21 @@ def convert(
 
     new_outbounds = base_outbounds + parsed_nodes
 
-    # 精准匹配精简版和全分组版的核心节点承载分组
+    # 智能分流注入
     target_selector_tags = ["🚀 节点选择", "🚀 手动切换", "全局代理"]
     for g in group_outbounds:
+        tag_name = g.get("tag", "")
+        # 1. 自动测速组
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
-        elif g.get("type") == "selector":
-            if g.get("tag") in target_selector_tags:
-                static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT", "🚀 手动切换"]]
-                g["outbounds"] = static_items + node_tags
+        # 2. 地区专用选择组
+        elif tag_name in region_tags:
+            matched = region_tags[tag_name]
+            g["outbounds"] = matched if matched else ["DIRECT"]
+        # 3. 核心节点总控组
+        elif tag_name in target_selector_tags:
+            static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT", "🚀 手动切换"]]
+            g["outbounds"] = static_items + node_tags
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
