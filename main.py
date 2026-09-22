@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 import urllib.parse
 import base64
 import json
@@ -41,8 +41,8 @@ HTML_CONTENT = """
         
         <label for="template-select">选择转换模板：</label>
         <select id="template-select">
-            <option value="lite">精简版自定义模板 (template.json)</option>
-            <option value="acl">ACL4SSR 全分组模板 (template-acl.json)</option>
+            <option value="lite">精简版原版模板 (template.json)</option>
+            <option value="acl">全分组高级模板 (template-acl.json)</option>
         </select>
 
         <label for="input-content">粘贴节点链接或订阅地址：</label>
@@ -109,10 +109,18 @@ def decode_b64(s: str) -> str:
         except Exception:
             return ""
 
-def parse_vless(url_str: str) -> dict:
-    original_str = url_str
-    body = url_str[8:] if url_str.startswith("vless://") else url_str
+def clean_uuid(raw_uuid: str) -> str:
+    raw_uuid = raw_uuid.lstrip(":").strip()
+    if "-" not in raw_uuid and len(raw_uuid) > 20:
+        decoded = decode_b64(raw_uuid)
+        if decoded:
+            cleaned = decoded.lstrip(":").strip()
+            if cleaned:
+                return cleaned
+    return raw_uuid
 
+def parse_vless(url_str: str) -> dict:
+    body = url_str[8:] if url_str.startswith("vless://") else url_str
     tag = "vless_node"
     if "#" in body:
         body, frag = body.rsplit("#", 1)
@@ -136,7 +144,6 @@ def parse_vless(url_str: str) -> dict:
         port_match = re.search(r':(\d+)', after_bracket)
         if port_match:
             server_port = int(port_match.group(1))
-        
         prefix = body[:body.find("[")]
         uuid_part = prefix.split("@")[0] if "@" in prefix else prefix
         uuid_str = clean_uuid(uuid_part)
@@ -179,17 +186,7 @@ def parse_vless(url_str: str) -> dict:
     net = query_dict.get('type', [query_dict.get('obfs', ['tcp'])[0]])[0]
     raw_path = query_dict.get('path', ['/'])[0]
     path = urllib.parse.unquote(raw_path)
-    
     host = query_dict.get('host', [''])[0]
-    obfs_param = query_dict.get('obfsParam', [''])[0]
-    if obfs_param:
-        try:
-            param_json = json.loads(obfs_param)
-            if "Host" in param_json:
-                host = param_json["Host"]
-        except Exception:
-            pass
-            
     security = query_dict.get('security', ['tls' if (query_dict.get('tls',[''])[0]=='1' or query_dict.get('tls',[''])[0]=='true') else ''])[0]
     sni = query_dict.get('sni', [query_dict.get('peer', [host])[0]])[0]
     fp = query_dict.get('fp', [query_dict.get('fingerprint', ['chrome'])[0]])[0]
@@ -209,16 +206,6 @@ def parse_vless(url_str: str) -> dict:
             "utls": {"enabled": True, "fingerprint": fp}
         }
     return node
-
-def clean_uuid(raw_uuid: str) -> str:
-    raw_uuid = raw_uuid.lstrip(":").strip()
-    if "-" not in raw_uuid and len(raw_uuid) > 20:
-        decoded = decode_b64(raw_uuid)
-        if decoded:
-            cleaned = decoded.lstrip(":").strip()
-            if cleaned:
-                return cleaned
-    return raw_uuid
 
 def parse_vmess(url_str: str) -> dict:
     raw = decode_b64(url_str[8:])
@@ -340,7 +327,7 @@ def convert(
     if not parsed_nodes:
         raise HTTPException(status_code=400, detail="未发现可解析的节点，请检查输入的链接格式")
 
-    # 根据前端选择动态加载模板：lite 对应 template.json，acl 对应 template-acl.json
+    # 根据选择加载对应文件：精简版用原版 template.json，全分组用 template-acl.json
     template_file = "template-acl.json" if template == "acl" else "template.json"
     
     try:
@@ -353,19 +340,22 @@ def convert(
     group_outbounds = []
     
     for o in config.get("outbounds", []):
-        if o.get("type") in ["direct", "block"]:
+        if o.get("type") in ["direct", "block", "dns"]:
             base_outbounds.append(o)
         elif o.get("type") in ["urltest", "selector"]:
             group_outbounds.append(o)
 
     new_outbounds = base_outbounds + parsed_nodes
 
+    # 精准匹配精简版和全分组版的核心节点承载分组
+    target_selector_tags = ["🚀 节点选择", "🚀 手动切换", "全局代理"]
     for g in group_outbounds:
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
         elif g.get("type") == "selector":
-            reserved = [t for t in g.get("outbounds", []) if t in ["DIRECT", "REJECT", "♻️ 自动选择", "🚀 节点选择"]]
-            g["outbounds"] = reserved + node_tags
+            if g.get("tag") in target_selector_tags:
+                static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT", "🚀 手动切换"]]
+                g["outbounds"] = static_items + node_tags
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
