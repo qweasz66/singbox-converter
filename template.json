@@ -5,6 +5,7 @@
     "timestamp": true
   },
   "dns": {
+    "strategy": "prefer_ipv4",
     "servers": [
       {
         "tag": "dns_proxy",
@@ -21,7 +22,8 @@
       {
         "tag": "dns_fakeip",
         "type": "fakeip",
-        "inet4_range": "198.18.0.0/15"
+        "inet4_range": "198.18.0.0/15",
+        "inet6_range": "fc00::/18"
       },
       {
         "tag": "dns_resolver",
@@ -72,7 +74,8 @@
       "strict_route": true,
       "stack": "mixed",
       "address": [
-        "172.19.0.1/30"
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
       ]
     }
   ],
