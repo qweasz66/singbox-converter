@@ -2,7 +2,7 @@
   "dns": {
     "final": "remote",
     "reverse_mapping": true,
-    "strategy": "prefer_ipv4",
+    "strategy": "ipv4_only",
     "servers": [
       {
         "tag": "remote",
@@ -14,7 +14,7 @@
           "enabled": true,
           "server_name": "cloudflare-dns.com"
         },
-        "detour": "🚀 手动切换"
+        "detour": "♻️ 自动选择"
       },
       {
         "tag": "local",
@@ -35,7 +35,11 @@
         "rcode": "NOERROR"
       },
       {
-        "rule_set": "geosite-cn",
+        "rule_set": [
+          "geosite-cn",
+          "geosite-apple",
+          "geosite-microsoft"
+        ],
         "server": "local",
         "action": "route"
       }
@@ -46,8 +50,7 @@
       "type": "tun",
       "tag": "tun-in",
       "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
+        "172.19.0.1/30"
       ],
       "auto_route": true,
       "strict_route": true,
@@ -350,7 +353,12 @@
       },
       {
         "ip_is_private": true,
-        "outbound": "🎯 全球直连",
+        "outbound": "DIRECT",
+        "action": "route"
+      },
+      {
+        "protocol": "bittorrent",
+        "outbound": "DIRECT",
         "action": "route"
       },
       {
@@ -484,7 +492,7 @@
   "http_clients": [
     {
       "tag": "rule-set-http",
-      "detour": "🚀 节点选择"
+      "detour": "DIRECT"
     }
   ],
   "experimental": {
