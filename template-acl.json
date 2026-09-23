@@ -2,7 +2,7 @@
   "dns": {
     "final": "remote",
     "reverse_mapping": true,
-    "strategy": "ipv4_only",
+    "strategy": "prefer_ipv4",
     "servers": [
       {
         "tag": "remote",
@@ -46,7 +46,8 @@
       "type": "tun",
       "tag": "tun-in",
       "address": [
-        "172.19.0.1/30"
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
       ],
       "auto_route": true,
       "strict_route": true,
@@ -304,12 +305,12 @@
       ]
     },
     {
-      "type": "block",
-      "tag": "REJECT"
-    },
-    {
       "type": "direct",
       "tag": "DIRECT"
+    },
+    {
+      "type": "block",
+      "tag": "REJECT"
     }
   ],
   "route": {
@@ -483,7 +484,7 @@
   "http_clients": [
     {
       "tag": "rule-set-http",
-      "detour": "DIRECT"
+      "detour": "🚀 节点选择"
     }
   ],
   "experimental": {
