@@ -26,6 +26,17 @@
           "enabled": true,
           "server_name": "dns.alidns.com"
         }
+      },
+      {
+        "tag": "local-bootstrap",
+        "type": "udp",
+        "server": "223.5.5.5",
+        "server_port": 53
+      },
+      {
+        "tag": "fakeip",
+        "type": "fakeip",
+        "inet4_range": "198.18.0.0/15"
       }
     ],
     "rules": [
@@ -35,13 +46,33 @@
         "rcode": "NOERROR"
       },
       {
+        "clash_mode": "直接连接",
+        "server": "local"
+      },
+      {
+        "domain": [
+          "time.apple.com"
+        ],
+        "domain_suffix": [
+          "pool.ntp.org",
+          "router.asus.com",
+          "tplinkwifi.net"
+        ],
+        "server": "local"
+      },
+      {
         "rule_set": [
           "geosite-cn",
-          "geosite-apple",
           "geosite-microsoft"
         ],
-        "server": "local",
-        "action": "route"
+        "server": "local"
+      },
+      {
+        "query_type": [
+          "A",
+          "AAAA"
+        ],
+        "server": "fakeip"
       }
     ]
   },
@@ -50,11 +81,12 @@
       "type": "tun",
       "tag": "tun-in",
       "address": [
-        "172.19.0.1/30"
+        "172.19.0.1/28"
       ],
+      "mtu": 9000,
       "auto_route": true,
-      "strict_route": true,
-      "stack": "mixed"
+      "strict_route": false,
+      "stack": "system"
     }
   ],
   "outbounds": [
@@ -80,7 +112,8 @@
         "🇰🇷 韩国节点",
         "🚀 手动切换",
         "DIRECT"
-      ]
+      ],
+      "interrupt_exist_connections": true
     },
     {
       "type": "selector",
@@ -91,9 +124,11 @@
       "type": "urltest",
       "tag": "♻️ 自动选择",
       "outbounds": [],
-      "url": "https://cp.cloudflare.com/generate_204",
-      "interval": "10m",
-      "tolerance": 100
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "idle_timeout": "30m",
+      "tolerance": 50,
+      "interrupt_exist_connections": true
     },
     {
       "type": "selector",
@@ -214,8 +249,8 @@
       "type": "selector",
       "tag": "🍎 苹果服务",
       "outbounds": [
-        "DIRECT",
         "🚀 节点选择",
+        "DIRECT",
         "🇺🇲 美国节点",
         "🇭🇰 香港节点",
         "🇨🇳 台湾节点",
@@ -338,99 +373,95 @@
         "type": "logical"
       },
       {
-        "action": "resolve"
+        "ip_is_private": true,
+        "outbound": "DIRECT"
       },
       {
-        "domain_suffix": [
-          "jsdelivr.net"
+        "ip_cidr": [
+          "100.64.0.0/10",
+          "224.0.0.0/4",
+          "255.255.255.255/32"
         ],
-        "outbound": "DIRECT",
-        "action": "route"
+        "outbound": "DIRECT"
       },
       {
-        "action": "route",
+        "action": "reject",
+        "method": "drop",
+        "port": [
+          135,
+          137,
+          138,
+          139,
+          445
+        ]
+      },
+      {
+        "action": "reject",
+        "method": "drop",
+        "port": 443,
+        "protocol": "quic",
+        "rule_set": [
+          "geosite-youtube"
+        ]
+      },
+      {
         "clash_mode": "全局代理",
         "outbound": "全局代理"
       },
       {
-        "action": "route",
         "clash_mode": "直接连接",
         "outbound": "DIRECT"
       },
       {
-        "ip_is_private": true,
-        "outbound": "DIRECT",
-        "action": "route"
-      },
-      {
-        "ip_cidr": [
-          "100.64.0.0/10"
-        ],
-        "outbound": "DIRECT",
-        "action": "route"
-      },
-      {
         "protocol": "bittorrent",
-        "outbound": "DIRECT",
-        "action": "route"
+        "outbound": "DIRECT"
       },
       {
         "rule_set": "geosite-category-ads-all",
-        "outbound": "🛑 广告拦截",
-        "action": "route"
+        "outbound": "🛑 广告拦截"
       },
       {
         "rule_set": "geosite-openai",
-        "outbound": "💬 Ai平台",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-telegram",
-        "outbound": "📲 电报消息",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-youtube",
-        "outbound": "📹 油管视频",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-netflix",
-        "outbound": "🎥 奈飞视频",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-bahamut",
-        "outbound": "📺 巴哈姆特",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-bilibili",
-        "outbound": "📺 哔哩哔哩",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-microsoft",
-        "outbound": "Ⓜ️ 微软服务",
-        "action": "route"
-      },
-      {
-        "rule_set": "geosite-apple",
-        "outbound": "🍎 苹果服务",
-        "action": "route"
+        "outbound": "💬 Ai平台"
       },
       {
         "rule_set": [
-          "geosite-cn",
-          "geoip-cn"
+          "geosite-telegram",
+          "geoip-telegram"
         ],
-        "outbound": "🎯 全球直连",
-        "action": "route"
+        "outbound": "📲 电报消息"
       },
       {
-        "action": "route",
-        "clash_mode": "规则判定",
-        "outbound": "🐟 漏网之鱼"
+        "rule_set": "geosite-youtube",
+        "outbound": "📹 油管视频"
+      },
+      {
+        "rule_set": "geosite-netflix",
+        "outbound": "🎥 奈飞视频"
+      },
+      {
+        "rule_set": "geosite-bahamut",
+        "outbound": "📺 巴哈姆特"
+      },
+      {
+        "rule_set": "geosite-bilibili",
+        "outbound": "📺 哔哩哔哩"
+      },
+      {
+        "rule_set": "geosite-microsoft",
+        "outbound": "Ⓜ️ 微软服务"
+      },
+      {
+        "rule_set": "geosite-apple",
+        "outbound": "🍎 苹果服务"
+      },
+      {
+        "rule_set": "geosite-cn",
+        "outbound": "🎯 全球直连"
+      },
+      {
+        "rule_set": "geoip-cn",
+        "outbound": "🎯 全球直连"
       }
     ],
     "rule_set": [
@@ -438,79 +469,98 @@
         "tag": "geosite-category-ads-all",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-openai",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/openai.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-telegram",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/telegram.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/telegram.srs",
+        "update_interval": "24h"
+      },
+      {
+        "tag": "geoip-telegram",
+        "type": "remote",
+        "format": "binary",
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/telegram.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-youtube",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/youtube.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/youtube.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-netflix",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/netflix.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-bahamut",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bahamut.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bahamut.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-bilibili",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bilibili.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/bilibili.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-microsoft",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/microsoft.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/microsoft.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-apple",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/apple.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/apple.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-cn",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geoip-cn",
         "type": "remote",
         "format": "binary",
-        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs"
+        "url": "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "update_interval": "24h"
       }
     ]
   },
   "http_clients": [
     {
-      "tag": "rule-set-http"
+      "tag": "default",
+      "detour": "🚀 节点选择"
     }
   ],
   "experimental": {
     "cache_file": {
       "enabled": true,
-      "store_fakeip": false
+      "store_fakeip": true
     },
     "clash_api": {
       "default_mode": "规则判定"
