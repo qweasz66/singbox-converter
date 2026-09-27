@@ -46,7 +46,7 @@ HTML_CONTENT = """
             <option value="acl">全分组高级模板 (template-acl.json)</option>
         </select>
 
-        <label for="input-content">粘贴节点链接或订阅地址（支持多行粘贴多个）：</label>
+        <label for="input-content">粘贴节点链接或订阅地址（支持多行粘贴）：</label>
         <textarea id="input-content" placeholder="支持一行一个订阅链接，或混合粘贴 vless://, vmess://, trojan://, ss:// 节点..."></textarea>
         
         <div class="btn-group">
@@ -71,7 +71,6 @@ HTML_CONTENT = """
             }
 
             var template = document.getElementById('template-select').value;
-            // 提取所有非空行
             var lines = rawInput.split(/[\\r\\n]+/).map(function(item) {
                 return item.trim();
             }).filter(function(item) {
@@ -83,7 +82,6 @@ HTML_CONTENT = """
                 return null;
             }
 
-            // 用竖线 | 合并多个订阅或节点
             var joined = lines.join('|');
             var origin = window.location.origin || (window.location.protocol + '//' + window.location.host);
             return origin + '/convert?url=' + encodeURIComponent(joined) + '&template=' + encodeURIComponent(template);
@@ -115,7 +113,6 @@ HTML_CONTENT = """
             var text = document.getElementById('sub-url').innerText;
             if (!text) return;
 
-            // 兼容性极好的复制方案（支持 HTTP 与非安全上下文）
             var textArea = document.createElement("textarea");
             textArea.value = text;
             textArea.style.position = "fixed";
@@ -141,7 +138,6 @@ HTML_CONTENT = """
 </html>
 """
 
-# 地区匹配正则
 REGION_RULES = {
     "🇭🇰 香港节点": re.compile(r"香港|HK|Hong\s*Kong|🇭🇰", re.I),
     "🇯🇵 日本节点": re.compile(r"日本|JP|Japan|Tokyo|Osaka|🇯🇵", re.I),
@@ -150,9 +146,6 @@ REGION_RULES = {
     "🇨🇳 台湾节点": re.compile(r"台湾|TW|Taiwan|Taipei|🇹🇼", re.I),
     "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul|🇰🇷", re.I),
 }
-
-# 过滤无用节点
-EXCLUDE_KEYWORD = re.compile(r"官网|剩余|流量|套餐|免费|订阅|到期|重置|Expire|Traffic|GB", re.I)
 
 def decode_b64(s: str) -> str:
     s = s.strip()
@@ -361,16 +354,16 @@ def parse_line(line: str) -> dict:
     if line.startswith("ss://"): return parse_ss(line)
     return None
 
-def fetch_content(item: str) -> str:
-    """拉取远程订阅或直接返回文本"""
-    item = item.strip()
-    if item.startswith("http://") or item.startswith("https://"):
+def fetch_single(target: str) -> str:
+    """拉取订阅文本，完全保留你最早版本的无 Header 逻辑"""
+    target = target.strip()
+    if target.startswith("http://") or target.startswith("https://"):
         try:
-            resp = requests.get(item, timeout=12, headers={"User-Agent": "v2rayN/sing-box"})
+            resp = requests.get(target, timeout=12)
             return resp.text
         except Exception:
             return ""
-    return item
+    return target
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -378,41 +371,38 @@ def index():
 
 @app.get("/convert")
 def convert(
-    url: str = Query(..., description="订阅链接或节点内容，多个链接可用 | 或 换行 分隔"),
+    url: str = Query(..., description="订阅链接或节点内容"),
     template: str = Query("lite", description="模板类型：lite 或 acl")
 ):
-    # 支持用 | 或换行符隔开的多个订阅
-    raw_items = re.split(r'[|\r\n]+', url)
-    all_raw_lines = []
+    # 分割多个链接或单链接
+    targets = re.split(r'[|\r\n]+', url)
+    all_lines = []
 
-    for item in raw_items:
-        if not item.strip():
+    for t in targets:
+        if not t.strip():
             continue
-        sub_text = fetch_content(item)
-        if not sub_text:
+        content = fetch_single(t)
+        if not content:
             continue
+
+        # 检查是否需要 base64 解码
+        if not any(content.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
+            decoded_sub = decode_b64(content)
+            if "://" in decoded_sub:
+                content = decoded_sub
         
-        # 兼容 base64 订阅编码
-        if not any(sub_text.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
-            decoded = decode_b64(sub_text)
-            if "://" in decoded:
-                sub_text = decoded
-        
-        all_raw_lines.extend(sub_text.splitlines())
+        all_lines.extend(content.splitlines())
 
     parsed_nodes = []
     node_tags = []
     seen_tags = {}
 
-    for line in all_raw_lines:
+    for line in all_lines:
         try:
             node = parse_line(line)
             if node:
+                # 移除了所有可能会误杀节点的正则过滤，恢复原本行为
                 base_tag = node["tag"].strip() or "Node"
-                if EXCLUDE_KEYWORD.search(base_tag):
-                    continue
-
-                # 多订阅混合节点 Tag 自动去重
                 count = seen_tags.get(base_tag, 0)
                 seen_tags[base_tag] = count + 1
                 unique_tag = base_tag if count == 0 else f"{base_tag} ({count})"
@@ -424,7 +414,7 @@ def convert(
             continue
 
     if not parsed_nodes:
-        raise HTTPException(status_code=400, detail="未从提供的订阅中解析出任何节点，请检查链接是否有效")
+        raise HTTPException(status_code=400, detail="未从提供的订阅中解析出任何有效节点，请检查链接")
 
     template_file = "template-acl.json" if template == "acl" else "template.json"
     try:
