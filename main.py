@@ -17,27 +17,28 @@ HTML_CONTENT = """
     <title>Sing-box 订阅/节点转换器</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f6f9; color: #333; padding: 20px; }
-        .container { max-width: 680px; margin: 40px auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 30px; }
-        h2 { font-size: 22px; margin-bottom: 8px; color: #111; text-align: center; }
-        p.subtitle { font-size: 14px; color: #666; text-align: center; margin-bottom: 24px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f4f6f9; color: #333; padding: 15px; }
+        .container { max-width: 680px; margin: 20px auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); padding: 25px; }
+        h2 { font-size: 20px; margin-bottom: 6px; color: #111; text-align: center; }
+        p.subtitle { font-size: 13px; color: #666; text-align: center; margin-bottom: 20px; }
         label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 8px; color: #444; }
-        textarea, select { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 18px; outline: none; transition: border-color 0.2s; font-family: inherit; }
-        textarea { height: 130px; resize: vertical; font-family: monospace; }
+        textarea, select { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 13px; margin-bottom: 16px; outline: none; transition: border-color 0.2s; font-family: inherit; }
+        textarea { height: 120px; resize: vertical; font-family: monospace; }
         textarea:focus, select:focus { border-color: #0070f3; }
-        .btn-group { display: flex; gap: 12px; margin-bottom: 20px; }
-        button { flex: 1; padding: 12px; font-size: 15px; font-weight: 600; color: #fff; background-color: #0070f3; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
+        .btn-group { display: flex; gap: 10px; margin-bottom: 15px; }
+        button { flex: 1; padding: 12px; font-size: 14px; font-weight: 600; color: #fff; background-color: #0070f3; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
         button:hover { background-color: #0051cc; }
         button.secondary { background-color: #10b981; }
         button.secondary:hover { background-color: #059669; }
-        .output-box { display: none; margin-top: 20px; }
-        .sub-link-box { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 13px; word-break: break-all; margin-bottom: 12px; }
+        .output-box { display: none; margin-top: 15px; }
+        .sub-link-box { background: #f8fafc; border: 1px dashed #cbd5e1; padding: 12px; border-radius: 8px; font-family: monospace; font-size: 12px; word-break: break-all; margin-bottom: 10px; user-select: all; -webkit-user-select: all; }
+        .tips { font-size: 12px; color: #888; margin-top: 5px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>🚀 Sing-box 节点转换器</h2>
-        <p class="subtitle">支持多订阅合并 / 自动去重 / 地区分流 / 智能注入</p>
+        <h2>🚀 Sing-box 节点/多订阅转换器</h2>
+        <p class="subtitle">支持多订阅合并 / 自动去重 / 智能地区注入</p>
         
         <label for="template-select">选择转换模板：</label>
         <select id="template-select">
@@ -45,56 +46,95 @@ HTML_CONTENT = """
             <option value="acl">全分组高级模板 (template-acl.json)</option>
         </select>
 
-        <label for="input-content">粘贴节点链接或订阅地址（支持多行粘贴多个订阅）：</label>
+        <label for="input-content">粘贴节点链接或订阅地址（支持多行粘贴多个）：</label>
         <textarea id="input-content" placeholder="支持一行一个订阅链接，或混合粘贴 vless://, vmess://, trojan://, ss:// 节点..."></textarea>
         
         <div class="btn-group">
-            <button onclick="convertNode()">生成转换链接</button>
-            <button class="secondary" onclick="downloadConfig()">直接下载 config.json</button>
+            <button type="button" onclick="handleGenerate()">生成转换链接</button>
+            <button type="button" class="secondary" onclick="handleDownload()">直接下载配置</button>
         </div>
 
         <div id="output" class="output-box">
-            <label>专属 Sing-box 完整订阅链接：</label>
+            <label>专属 Sing-box 订阅链接：</label>
             <div id="sub-url" class="sub-link-box"></div>
-            <button onclick="copyUrl()">复制订阅链接</button>
+            <button type="button" onclick="handleCopy()">复制订阅链接</button>
+            <p class="tips">💡 若点击复制无提示，可直接长按上方虚线框全选复制。</p>
         </div>
     </div>
 
     <script>
-        function getConvertUrl() {
-            const rawInput = document.getElementById('input-content').value.trim();
-            const template = document.getElementById('template-select').value;
-            if (!rawInput) {
-                alert('请先输入节点链接或订阅地址！');
+        function buildUrl() {
+            var rawInput = document.getElementById('input-content').value;
+            if (!rawInput || !rawInput.trim()) {
+                alert('请先输入订阅链接或节点！');
                 return null;
             }
 
-            // 处理输入：如果是多行链接，用 | 拼成单一参数
-            const lines = rawInput.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
-            const combinedInput = lines.join('|');
-
-            const baseUrl = window.location.origin + '/convert?url=';
-            return baseUrl + encodeURIComponent(combinedInput) + '&template=' + template;
-        }
-
-        function convertNode() {
-            const url = getConvertUrl();
-            if (!url) return;
-            document.getElementById('sub-url').innerText = url;
-            document.getElementById('output').style.display = 'block';
-        }
-
-        function copyUrl() {
-            const text = document.getElementById('sub-url').innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                alert('订阅链接已复制到剪贴板！');
+            var template = document.getElementById('template-select').value;
+            // 提取所有非空行
+            var lines = rawInput.split(/[\\r\\n]+/).map(function(item) {
+                return item.trim();
+            }).filter(function(item) {
+                return item.length > 0;
             });
+
+            if (lines.length === 0) {
+                alert('未输入有效内容！');
+                return null;
+            }
+
+            // 用竖线 | 合并多个订阅或节点
+            var joined = lines.join('|');
+            var origin = window.location.origin || (window.location.protocol + '//' + window.location.host);
+            return origin + '/convert?url=' + encodeURIComponent(joined) + '&template=' + encodeURIComponent(template);
         }
 
-        function downloadConfig() {
-            const url = getConvertUrl();
+        function handleGenerate() {
+            try {
+                var url = buildUrl();
+                if (!url) return;
+
+                var outputBox = document.getElementById('output');
+                var subUrlEl = document.getElementById('sub-url');
+                
+                subUrlEl.innerText = url;
+                outputBox.style.display = 'block';
+                subUrlEl.scrollIntoView({ behavior: 'smooth' });
+            } catch (err) {
+                alert('生成失败: ' + err.message);
+            }
+        }
+
+        function handleDownload() {
+            var url = buildUrl();
             if (!url) return;
             window.open(url, '_blank');
+        }
+
+        function handleCopy() {
+            var text = document.getElementById('sub-url').innerText;
+            if (!text) return;
+
+            // 兼容性极好的复制方案（支持 HTTP 与非安全上下文）
+            var textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+
+            try {
+                var successful = document.execCommand('copy');
+                if (successful) {
+                    alert('已复制到剪贴板！');
+                } else {
+                    alert('复制失败，请直接在方框内长按全选复制');
+                }
+            } catch (err) {
+                alert('复制失败，请直接在方框内长按全选复制');
+            }
+            document.body.removeChild(textArea);
         }
     </script>
 </body>
@@ -384,7 +424,7 @@ def convert(
             continue
 
     if not parsed_nodes:
-        raise HTTPException(status_code=400, detail="未从提供的订阅链接中解析出任何有效节点，请检查链接是否有效")
+        raise HTTPException(status_code=400, detail="未从提供的订阅中解析出任何节点，请检查链接是否有效")
 
     template_file = "template-acl.json" if template == "acl" else "template.json"
     try:
@@ -416,18 +456,18 @@ def convert(
 
     for g in group_outbounds:
         tag_name = g.get("tag", "")
-        # 1. 自动测速组：塞入所有机场合并后的节点
+        # 1. 自动测速组：塞入所有节点
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
-        # 2. 地区专用选择组：塞入匹配地区（若两个机场都没有该地区节点则 DIRECT 兜底）
+        # 2. 地区专用选择组：塞入对应地区节点（若无则 DIRECT 兜底）
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 手动切换/全局代理组：塞入所有节点供单独挑选
+        # 3. 手动切换/全局代理组：塞入全量单节点供自选
         elif tag_name in target_selector_tags:
             static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT"]]
             g["outbounds"] = static_items + node_tags
-        # 4. 其他业务组（🚀 节点选择、Ai平台等）：保留模板自带分流层级
+        # 4. 其余业务组（🚀 节点选择、Ai平台、流媒体等）：原样保留模板层级
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
