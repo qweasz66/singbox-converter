@@ -10,13 +10,18 @@
       {
         "tag": "ali",
         "type": "https",
-        "server": "223.5.5.5"
+        "server": "223.5.5.5",
+        "detour": "DIRECT"
       },
       {
         "tag": "tx",
         "type": "https",
-        "server": "doh.pub",
-        "domain_resolver": "hosts"
+        "server": "1.12.12.21",
+        "tls": {
+          "enabled": true,
+          "server_name": "doh.pub"
+        },
+        "detour": "DIRECT"
       },
       {
         "tag": "google",
@@ -28,16 +33,6 @@
         "tag": "fakeip",
         "type": "fakeip",
         "inet4_range": "198.19.0.0/16"
-      },
-      {
-        "tag": "hosts",
-        "type": "hosts",
-        "predefined": {
-          "doh.pub": [
-            "1.12.12.21",
-            "120.53.53.53"
-          ]
-        }
       }
     ],
     "rules": [
@@ -50,8 +45,7 @@
       },
       {
         "rule_set": "geosite-category-ads-all",
-        "action": "reject",
-        "method": "drop"
+        "action": "reject"
       },
       {
         "clash_mode": "直接连接",
@@ -68,9 +62,21 @@
         "domain_suffix": [
           "pool.ntp.org",
           "router.asus.com",
-          "tplinkwifi.net"
+          "tplinkwifi.net",
+          "push.apple.com"
         ],
         "server": "local"
+      },
+      {
+        "domain_suffix": [
+          "google.com",
+          "google.cn",
+          "gstatic.com",
+          "googleapis.com",
+          "googletagmanager.com",
+          "googlevideo.com"
+        ],
+        "server": "google"
       },
       {
         "rule_set": [
@@ -125,8 +131,7 @@
     "cache_capacity": 8192,
     "optimistic": {
       "enabled": true
-    },
-    "reverse_mapping": true
+    }
   },
   "inbounds": [
     {
@@ -138,6 +143,7 @@
       ],
       "auto_route": true,
       "strict_route": false,
+      "stack": "mixed",
       "platform": {
         "http_proxy": {
           "enabled": true,
@@ -192,8 +198,9 @@
       "outbounds": [
         "DIRECT"
       ],
-      "url": "https://clients1.google.com/generate_204",
-      "interval": "30m",
+      "url": "https://cp.cloudflare.com/generate_204",
+      "interval": "10m",
+      "idle_timeout": "30m",
       "tolerance": 50,
       "interrupt_exist_connections": true
     },
@@ -319,14 +326,6 @@
       ]
     },
     {
-      "tag": "🛑 广告拦截",
-      "type": "selector",
-      "outbounds": [
-        "REJECT",
-        "DIRECT"
-      ]
-    },
-    {
       "tag": "🐟 漏网之鱼",
       "type": "selector",
       "outbounds": [
@@ -403,6 +402,25 @@
   "route": {
     "rules": [
       {
+        "action": "hijack-dns",
+        "type": "logical",
+        "mode": "or",
+        "rules": [
+          {
+            "port": 53
+          },
+          {
+            "protocol": "dns"
+          }
+        ]
+      },
+      {
+        "domain_suffix": [
+          "push.apple.com"
+        ],
+        "outbound": "DIRECT"
+      },
+      {
         "type": "logical",
         "mode": "or",
         "rules": [
@@ -422,20 +440,7 @@
           "quic",
           "dns"
         ],
-        "timeout": "100ms"
-      },
-      {
-        "type": "logical",
-        "mode": "or",
-        "rules": [
-          {
-            "port": 53
-          },
-          {
-            "protocol": "dns"
-          }
-        ],
-        "action": "hijack-dns"
+        "timeout": "200ms"
       },
       {
         "ip_is_private": true,
@@ -451,7 +456,7 @@
       },
       {
         "action": "reject",
-        "method": "drop",
+        "no_drop": true,
         "port": [
           135,
           137,
@@ -503,7 +508,19 @@
       },
       {
         "rule_set": "geosite-category-ads-all",
-        "outbound": "🛑 广告拦截"
+        "action": "reject",
+        "no_drop": true
+      },
+      {
+        "domain_suffix": [
+          "google.com",
+          "google.com.hk",
+          "google.cn",
+          "gstatic.com",
+          "googleapis.com",
+          "googletagmanager.com"
+        ],
+        "outbound": "🚀 节点选择"
       },
       {
         "rule_set": "geosite-category-ai-!cn",
@@ -574,7 +591,8 @@
         ],
         "type": "remote",
         "format": "source",
-        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/qichiyuhub/rule/refs/heads/main/rules/{tag}.json"
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/qichiyuhub/rule/refs/heads/main/rules/{tag}.json",
+        "update_interval": "24h"
       },
       {
         "tag": [
@@ -594,25 +612,29 @@
         ],
         "type": "remote",
         "format": "binary",
-        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/{tag}.srs"
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/{tag}.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geosite-category-ads-all",
         "type": "remote",
         "format": "binary",
-        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs"
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geoip-telegram",
         "type": "remote",
         "format": "binary",
-        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs"
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs",
+        "update_interval": "24h"
       },
       {
         "tag": "geoip-cn",
         "type": "remote",
         "format": "binary",
-        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+        "url": "https://gh-proxy.com/https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        "update_interval": "24h"
       }
     ],
     "final": "🐟 漏网之鱼",
