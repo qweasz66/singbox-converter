@@ -23,7 +23,7 @@ HTML_CONTENT = """
         p.subtitle { font-size: 14px; color: #666; text-align: center; margin-bottom: 24px; }
         label { font-weight: 600; font-size: 14px; display: block; margin-bottom: 8px; color: #444; }
         textarea, select { width: 100%; border: 1px solid #ddd; border-radius: 8px; padding: 12px; font-size: 14px; margin-bottom: 18px; outline: none; transition: border-color 0.2s; font-family: inherit; }
-        textarea { height: 120px; resize: vertical; font-family: monospace; }
+        textarea { height: 130px; resize: vertical; font-family: monospace; }
         textarea:focus, select:focus { border-color: #0070f3; }
         .btn-group { display: flex; gap: 12px; margin-bottom: 20px; }
         button { flex: 1; padding: 12px; font-size: 15px; font-weight: 600; color: #fff; background-color: #0070f3; border: none; border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
@@ -37,7 +37,7 @@ HTML_CONTENT = """
 <body>
     <div class="container">
         <h2>🚀 Sing-box 节点转换器</h2>
-        <p class="subtitle">自动去重 / 地区分流 / 智能注入</p>
+        <p class="subtitle">支持多订阅合并 / 自动去重 / 地区分流 / 智能注入</p>
         
         <label for="template-select">选择转换模板：</label>
         <select id="template-select">
@@ -45,8 +45,8 @@ HTML_CONTENT = """
             <option value="acl">全分组高级模板 (template-acl.json)</option>
         </select>
 
-        <label for="input-content">粘贴节点链接或订阅地址：</label>
-        <textarea id="input-content" placeholder="支持 vless://, vmess://, trojan://, ss:// 链接，或直接输入 http(s):// 订阅链接..."></textarea>
+        <label for="input-content">粘贴节点链接或订阅地址（支持多行粘贴多个订阅）：</label>
+        <textarea id="input-content" placeholder="支持一行一个订阅链接，或混合粘贴 vless://, vmess://, trojan://, ss:// 节点..."></textarea>
         
         <div class="btn-group">
             <button onclick="convertNode()">生成转换链接</button>
@@ -62,14 +62,19 @@ HTML_CONTENT = """
 
     <script>
         function getConvertUrl() {
-            const input = document.getElementById('input-content').value.trim();
+            const rawInput = document.getElementById('input-content').value.trim();
             const template = document.getElementById('template-select').value;
-            if (!input) {
+            if (!rawInput) {
                 alert('请先输入节点链接或订阅地址！');
                 return null;
             }
+
+            // 处理输入：如果是多行链接，用 | 拼成单一参数
+            const lines = rawInput.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
+            const combinedInput = lines.join('|');
+
             const baseUrl = window.location.origin + '/convert?url=';
-            return baseUrl + encodeURIComponent(input) + '&template=' + template;
+            return baseUrl + encodeURIComponent(combinedInput) + '&template=' + template;
         }
 
         function convertNode() {
@@ -96,14 +101,18 @@ HTML_CONTENT = """
 </html>
 """
 
+# 地区匹配正则
 REGION_RULES = {
-    "🇭🇰 香港节点": re.compile(r"香港|HK|Hong\s*Kong", re.I),
-    "🇯🇵 日本节点": re.compile(r"日本|JP|Japan|Tokyo|Osaka", re.I),
-    "🇺🇲 美国节点": re.compile(r"美国|US|United\s*States|America", re.I),
-    "🇸🇬 狮城节点": re.compile(r"新加坡|狮城|SG|Singapore", re.I),
-    "🇨🇳 台湾节点": re.compile(r"台湾|TW|Taiwan|Taipei", re.I),
-    "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul", re.I),
+    "🇭🇰 香港节点": re.compile(r"香港|HK|Hong\s*Kong|🇭🇰", re.I),
+    "🇯🇵 日本节点": re.compile(r"日本|JP|Japan|Tokyo|Osaka|🇯🇵", re.I),
+    "🇺🇲 美国节点": re.compile(r"^(?!.*(?:AUS|RUS|澳大利亚|俄罗斯)).*(美国|\bUS\b|United\s*States|America|🇺🇸)", re.I),
+    "🇸🇬 狮城节点": re.compile(r"新加坡|狮城|SG|Singapore|🇸🇬", re.I),
+    "🇨🇳 台湾节点": re.compile(r"台湾|TW|Taiwan|Taipei|🇹🇼", re.I),
+    "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul|🇰🇷", re.I),
 }
+
+# 过滤无用节点
+EXCLUDE_KEYWORD = re.compile(r"官网|剩余|流量|套餐|免费|订阅|到期|重置|Expire|Traffic|GB", re.I)
 
 def decode_b64(s: str) -> str:
     s = s.strip()
@@ -312,39 +321,58 @@ def parse_line(line: str) -> dict:
     if line.startswith("ss://"): return parse_ss(line)
     return None
 
+def fetch_content(item: str) -> str:
+    """拉取远程订阅或直接返回文本"""
+    item = item.strip()
+    if item.startswith("http://") or item.startswith("https://"):
+        try:
+            resp = requests.get(item, timeout=12, headers={"User-Agent": "v2rayN/sing-box"})
+            return resp.text
+        except Exception:
+            return ""
+    return item
+
 @app.get("/", response_class=HTMLResponse)
 def index():
     return HTML_CONTENT
 
 @app.get("/convert")
 def convert(
-    url: str = Query(..., description="订阅链接或节点内容"),
+    url: str = Query(..., description="订阅链接或节点内容，多个链接可用 | 或 换行 分隔"),
     template: str = Query("lite", description="模板类型：lite 或 acl")
 ):
-    if url.startswith("http://") or url.startswith("https://"):
-        try:
-            resp = requests.get(url, timeout=10)
-            content = resp.text
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"拉取订阅失败: {str(e)}")
-    else:
-        content = url
+    # 支持用 | 或换行符隔开的多个订阅
+    raw_items = re.split(r'[|\r\n]+', url)
+    all_raw_lines = []
 
-    if not any(content.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
-        decoded_sub = decode_b64(content)
-        if "://" in decoded_sub:
-            content = decoded_sub
+    for item in raw_items:
+        if not item.strip():
+            continue
+        sub_text = fetch_content(item)
+        if not sub_text:
+            continue
+        
+        # 兼容 base64 订阅编码
+        if not any(sub_text.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
+            decoded = decode_b64(sub_text)
+            if "://" in decoded:
+                sub_text = decoded
+        
+        all_raw_lines.extend(sub_text.splitlines())
 
     parsed_nodes = []
     node_tags = []
     seen_tags = {}
 
-    for line in content.splitlines():
+    for line in all_raw_lines:
         try:
             node = parse_line(line)
             if node:
-                # Tag 去重防崩处理
                 base_tag = node["tag"].strip() or "Node"
+                if EXCLUDE_KEYWORD.search(base_tag):
+                    continue
+
+                # 多订阅混合节点 Tag 自动去重
                 count = seen_tags.get(base_tag, 0)
                 seen_tags[base_tag] = count + 1
                 unique_tag = base_tag if count == 0 else f"{base_tag} ({count})"
@@ -356,7 +384,7 @@ def convert(
             continue
 
     if not parsed_nodes:
-        raise HTTPException(status_code=400, detail="未发现可解析的节点，请检查输入的链接格式")
+        raise HTTPException(status_code=400, detail="未从提供的订阅链接中解析出任何有效节点，请检查链接是否有效")
 
     template_file = "template-acl.json" if template == "acl" else "template.json"
     try:
@@ -384,20 +412,22 @@ def convert(
     new_outbounds = base_outbounds + parsed_nodes
 
     # 智能分流注入
-    target_selector_tags = ["🚀 节点选择", "🚀 手动切换", "全局代理"]
+    target_selector_tags = ["🚀 手动切换", "全局代理"]
+
     for g in group_outbounds:
         tag_name = g.get("tag", "")
-        # 1. 自动测速组
+        # 1. 自动测速组：塞入所有机场合并后的节点
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
-        # 2. 地区专用选择组
+        # 2. 地区专用选择组：塞入匹配地区（若两个机场都没有该地区节点则 DIRECT 兜底）
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 核心节点总控组
+        # 3. 手动切换/全局代理组：塞入所有节点供单独挑选
         elif tag_name in target_selector_tags:
-            static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT", "🚀 手动切换"]]
+            static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT"]]
             g["outbounds"] = static_items + node_tags
+        # 4. 其他业务组（🚀 节点选择、Ai平台等）：保留模板自带分流层级
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
