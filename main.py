@@ -147,6 +147,9 @@ REGION_RULES = {
     "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul|🇰🇷", re.I),
 }
 
+# IPv6 专属特征匹配规则
+IPV6_PATTERN = re.compile(r"ipv6|\bv6\b", re.I)
+
 def decode_b64(s: str) -> str:
     s = s.strip()
     padding = len(s) % 4
@@ -401,7 +404,6 @@ def convert(
         try:
             node = parse_line(line)
             if node:
-                # 移除了所有可能会误杀节点的正则过滤，恢复原本行为
                 base_tag = node["tag"].strip() or "Node"
                 count = seen_tags.get(base_tag, 0)
                 seen_tags[base_tag] = count + 1
@@ -425,10 +427,14 @@ def convert(
 
     # 分类准备：按地区整理节点 tag
     region_tags = {k: [] for k in REGION_RULES}
+    ipv6_tags = []
+
     for tag in node_tags:
         for reg_name, pattern in REGION_RULES.items():
             if pattern.search(tag):
                 region_tags[reg_name].append(tag)
+        if IPV6_PATTERN.search(tag):
+            ipv6_tags.append(tag)
 
     base_outbounds = []
     group_outbounds = []
@@ -453,11 +459,19 @@ def convert(
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 手动切换/全局代理组：塞入全量单节点供自选
+        # 3. 🌐 IPv6 专用策略组：优先提取带 ipv6/v6 标识的节点，若无则平滑兜底
+        elif tag_name == "🌐 IPv6 节点":
+            g["outbounds"] = ipv6_tags if ipv6_tags else ["🚀 节点选择", "DIRECT"]
+        # 4. 🎵 TikTok 策略组：保留模板内置组，并自动追加非香港的海外可用节点
+        elif tag_name == "🎵 TikTok":
+            non_hk_nodes = [t for t in node_tags if not REGION_RULES["🇭🇰 香港节点"].search(t)]
+            existing = [t for t in g.get("outbounds", []) if t in ["🚀 节点选择", "♻️ 自动选择", "DIRECT"]]
+            g["outbounds"] = existing + (non_hk_nodes if non_hk_nodes else node_tags)
+        # 5. 手动切换/全局代理组：塞入全量单节点供自选
         elif tag_name in target_selector_tags:
             static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT"]]
             g["outbounds"] = static_items + node_tags
-        # 4. 其余业务组（🚀 节点选择、Ai平台、流媒体等）：原样保留模板层级
+        # 6. 其余业务组（🚀 节点选择、Ai平台、油管等）：原样保留模板层级
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
