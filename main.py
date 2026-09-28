@@ -5,6 +5,8 @@ import base64
 import json
 import re
 import requests
+import socket
+import ipaddress
 
 app = FastAPI(title="Sing-box Node Converter")
 
@@ -38,7 +40,7 @@ HTML_CONTENT = """
 <body>
     <div class="container">
         <h2>🚀 Sing-box 节点/多订阅转换器</h2>
-        <p class="subtitle">支持多订阅合并 / 自动去重 / 智能地区注入</p>
+        <p class="subtitle">支持多订阅合并 / 自动去重 / 真实 IPv6 探测注入</p>
         
         <label for="template-select">选择转换模板：</label>
         <select id="template-select">
@@ -148,6 +150,45 @@ REGION_RULES = {
 }
 
 IPV6_PATTERN = re.compile(r"ipv6|\bv6\b", re.I)
+
+# 内存 DNS 缓存，避免对相同 server 重复发起网络解析
+DNS_CACHE = {}
+
+def is_server_ipv6(server_str: str) -> bool:
+    """分析节点的 server 地址是否为真实 IPv6 或包含 AAAA 记录"""
+    if not server_str:
+        return False
+    
+    server_clean = server_str.strip().strip("[]")
+    
+    # 1. 尝试直接判断是否为 IPv6 字面量地址
+    try:
+        ip = ipaddress.ip_address(server_clean)
+        return isinstance(ip, ipaddress.IPv6Address)
+    except ValueError:
+        pass
+
+    # 如果是 IPv4 地址，则直接排除
+    try:
+        ipaddress.IPv4Address(server_clean)
+        return False
+    except ValueError:
+        pass
+
+    # 2. 如果是域名，查询 DNS 是否解析出 IPv6 (AAAA 记录)
+    if server_clean in DNS_CACHE:
+        return DNS_CACHE[server_clean]
+
+    has_ipv6 = False
+    try:
+        results = socket.getaddrinfo(server_clean, None, socket.AF_INET6)
+        if results:
+            has_ipv6 = True
+    except Exception:
+        has_ipv6 = False
+
+    DNS_CACHE[server_clean] = has_ipv6
+    return has_ipv6
 
 def decode_b64(s: str) -> str:
     s = s.strip()
@@ -421,14 +462,21 @@ def convert(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"找不到对应的模板文件: {template_file}")
 
+    # 分类准备：按地区整理节点 tag
     region_tags = {k: [] for k in REGION_RULES}
     ipv6_tags = []
 
-    for tag in node_tags:
+    for node in parsed_nodes:
+        tag = node["tag"]
+        server = node.get("server", "")
+
+        # 地区匹配
         for reg_name, pattern in REGION_RULES.items():
             if pattern.search(tag):
                 region_tags[reg_name].append(tag)
-        if IPV6_PATTERN.search(tag):
+
+        # 核心改进：优先分析 server 是否为真实 IPv6，同时保留名称特征作为双重判定
+        if is_server_ipv6(server) or IPV6_PATTERN.search(tag):
             ipv6_tags.append(tag)
 
     base_outbounds = []
@@ -452,7 +500,7 @@ def convert(
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 🌐 IPv6 专用策略组（无节点时兜底至自动选择或直连，杜绝闭环依赖）
+        # 3. 🌐 IPv6 专用策略组（注入识别到的真实 IPv6 节点，无则平滑兜底，杜绝循环依赖）
         elif tag_name == "🌐 IPv6 节点":
             g["outbounds"] = ipv6_tags if ipv6_tags else ["♻️ 自动选择", "DIRECT"]
         # 4. 🎵 TikTok 策略组（自动注入排除香港节点后的可用节点）
@@ -472,5 +520,5 @@ def convert(
 
 if __name__ == "__main__":
     import uvicorn
-    # 监听 "::" 确保 IPv4 与 IPv6 均能正常连通
+    # 监听 "::" 保证 IPv4 和 IPv6 双栈均能直接连入
     uvicorn.run(app, host="::", port=8001)
