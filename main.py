@@ -150,32 +150,26 @@ REGION_RULES = {
 }
 
 IPV6_PATTERN = re.compile(r"ipv6|\bv6\b", re.I)
-
-# 内存 DNS 缓存，避免对相同 server 重复发起网络解析
 DNS_CACHE = {}
 
 def is_server_ipv6(server_str: str) -> bool:
-    """分析节点的 server 地址是否为真实 IPv6 或包含 AAAA 记录"""
     if not server_str:
         return False
     
     server_clean = server_str.strip().strip("[]")
     
-    # 1. 尝试直接判断是否为 IPv6 字面量地址
     try:
         ip = ipaddress.ip_address(server_clean)
         return isinstance(ip, ipaddress.IPv6Address)
     except ValueError:
         pass
 
-    # 如果是 IPv4 地址，则直接排除
     try:
         ipaddress.IPv4Address(server_clean)
         return False
     except ValueError:
         pass
 
-    # 2. 如果是域名，查询 DNS 是否解析出 IPv6 (AAAA 记录)
     if server_clean in DNS_CACHE:
         return DNS_CACHE[server_clean]
 
@@ -462,7 +456,6 @@ def convert(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"找不到对应的模板文件: {template_file}")
 
-    # 分类准备：按地区整理节点 tag
     region_tags = {k: [] for k in REGION_RULES}
     ipv6_tags = []
 
@@ -470,12 +463,10 @@ def convert(
         tag = node["tag"]
         server = node.get("server", "")
 
-        # 地区匹配
         for reg_name, pattern in REGION_RULES.items():
             if pattern.search(tag):
                 region_tags[reg_name].append(tag)
 
-        # 核心改进：优先分析 server 是否为真实 IPv6，同时保留名称特征作为双重判定
         if is_server_ipv6(server) or IPV6_PATTERN.search(tag):
             ipv6_tags.append(tag)
 
@@ -500,19 +491,14 @@ def convert(
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 🌐 IPv6 专用策略组（注入识别到的真实 IPv6 节点，无则平滑兜底，杜绝循环依赖）
+        # 3. 🌐 IPv6 专用策略组
         elif tag_name == "🌐 IPv6 节点":
             g["outbounds"] = ipv6_tags if ipv6_tags else ["♻️ 自动选择", "DIRECT"]
-        # 4. 🎵 TikTok 策略组（自动注入排除香港节点后的可用节点）
-        elif tag_name == "🎵 TikTok":
-            non_hk_nodes = [t for t in node_tags if not REGION_RULES["🇭🇰 香港节点"].search(t)]
-            existing = [t for t in g.get("outbounds", []) if t in ["🚀 节点选择", "♻️ 自动选择", "DIRECT"]]
-            g["outbounds"] = existing + (non_hk_nodes if non_hk_nodes else node_tags)
-        # 5. 手动切换/全局代理组
+        # 4. 手动切换/全局代理组
         elif tag_name in target_selector_tags:
             static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT"]]
             g["outbounds"] = static_items + node_tags
-        # 6. 其余业务组
+        # 5. 其余业务组（🎵 TikTok、📹 油管视频、🎥 奈飞视频等）：原样保留模板设定的分组层级
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
@@ -520,5 +506,4 @@ def convert(
 
 if __name__ == "__main__":
     import uvicorn
-    # 监听 "::" 保证 IPv4 和 IPv6 双栈均能直接连入
     uvicorn.run(app, host="::", port=8001)
