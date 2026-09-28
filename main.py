@@ -147,7 +147,6 @@ REGION_RULES = {
     "🇰🇷 韩国节点": re.compile(r"韩国|KR|Korea|Seoul|🇰🇷", re.I),
 }
 
-# IPv6 专属特征匹配规则
 IPV6_PATTERN = re.compile(r"ipv6|\bv6\b", re.I)
 
 def decode_b64(s: str) -> str:
@@ -358,7 +357,6 @@ def parse_line(line: str) -> dict:
     return None
 
 def fetch_single(target: str) -> str:
-    """拉取订阅文本，完全保留你最早版本的无 Header 逻辑"""
     target = target.strip()
     if target.startswith("http://") or target.startswith("https://"):
         try:
@@ -377,7 +375,6 @@ def convert(
     url: str = Query(..., description="订阅链接或节点内容"),
     template: str = Query("lite", description="模板类型：lite 或 acl")
 ):
-    # 分割多个链接或单链接
     targets = re.split(r'[|\r\n]+', url)
     all_lines = []
 
@@ -388,7 +385,6 @@ def convert(
         if not content:
             continue
 
-        # 检查是否需要 base64 解码
         if not any(content.strip().startswith(p) for p in ["vless://", "vmess://", "trojan://", "ss://", "{"]):
             decoded_sub = decode_b64(content)
             if "://" in decoded_sub:
@@ -425,7 +421,6 @@ def convert(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"找不到对应的模板文件: {template_file}")
 
-    # 分类准备：按地区整理节点 tag
     region_tags = {k: [] for k in REGION_RULES}
     ipv6_tags = []
 
@@ -446,33 +441,36 @@ def convert(
             group_outbounds.append(o)
 
     new_outbounds = base_outbounds + parsed_nodes
-
-    # 智能分流注入
     target_selector_tags = ["🚀 手动切换", "全局代理"]
 
     for g in group_outbounds:
         tag_name = g.get("tag", "")
-        # 1. 自动测速组：塞入所有节点
+        # 1. 自动测速组
         if g.get("type") == "urltest":
             g["outbounds"] = node_tags
-        # 2. 地区专用选择组：塞入对应地区节点（若无则 DIRECT 兜底）
+        # 2. 地区专用选择组
         elif tag_name in region_tags:
             matched = region_tags[tag_name]
             g["outbounds"] = matched if matched else ["DIRECT"]
-        # 3. 🌐 IPv6 专用策略组：优先提取带 ipv6/v6 标识的节点，若无则平滑兜底
+        # 3. 🌐 IPv6 专用策略组（无节点时兜底至自动选择或直连，杜绝闭环依赖）
         elif tag_name == "🌐 IPv6 节点":
-            g["outbounds"] = ipv6_tags if ipv6_tags else ["🚀 节点选择", "DIRECT"]
-        # 4. 🎵 TikTok 策略组：保留模板内置组，并自动追加非香港的海外可用节点
+            g["outbounds"] = ipv6_tags if ipv6_tags else ["♻️ 自动选择", "DIRECT"]
+        # 4. 🎵 TikTok 策略组（自动注入排除香港节点后的可用节点）
         elif tag_name == "🎵 TikTok":
             non_hk_nodes = [t for t in node_tags if not REGION_RULES["🇭🇰 香港节点"].search(t)]
             existing = [t for t in g.get("outbounds", []) if t in ["🚀 节点选择", "♻️ 自动选择", "DIRECT"]]
             g["outbounds"] = existing + (non_hk_nodes if non_hk_nodes else node_tags)
-        # 5. 手动切换/全局代理组：塞入全量单节点供自选
+        # 5. 手动切换/全局代理组
         elif tag_name in target_selector_tags:
             static_items = [t for t in g.get("outbounds", []) if t in ["♻️ 自动选择", "DIRECT", "REJECT"]]
             g["outbounds"] = static_items + node_tags
-        # 6. 其余业务组（🚀 节点选择、Ai平台、油管等）：原样保留模板层级
+        # 6. 其余业务组
         new_outbounds.append(g)
 
     config["outbounds"] = new_outbounds
     return HTMLResponse(content=json.dumps(config, indent=2, ensure_ascii=False), media_type="application/json")
+
+if __name__ == "__main__":
+    import uvicorn
+    # 监听 "::" 确保 IPv4 与 IPv6 均能正常连通
+    uvicorn.run(app, host="::", port=8001)
